@@ -9,7 +9,7 @@ import { TaskRunner, ITaskRunnerOptions } from '../TaskRunner';
 import { ITaskWriter } from '@rushstack/stream-collator';
 import { TaskStatus } from '../TaskStatus';
 import { ITaskDefinition, ITask } from '../ITask';
-import { StringBufferTerminalProvider, Terminal } from '@rushstack/node-core-library';
+import { StringBufferTerminalProvider } from '@rushstack/node-core-library';
 import { Utilities } from '../../../utilities/Utilities';
 
 const mockGetTimeInMs: jest.Mock = jest.fn();
@@ -43,13 +43,11 @@ function checkConsoleOutput(terminalProvider: StringBufferTerminalProvider): voi
 
 describe('TaskRunner', () => {
   let terminalProvider: StringBufferTerminalProvider;
-  let terminal: Terminal;
   let taskRunner: TaskRunner;
   let taskRunnerOptions: ITaskRunnerOptions;
 
   beforeEach(() => {
     terminalProvider = new StringBufferTerminalProvider(true);
-    terminal = new Terminal(terminalProvider);
   });
 
   describe('Constructor', () => {
@@ -60,7 +58,7 @@ describe('TaskRunner', () => {
             quietMode: false,
             parallelism: 'tequila',
             changedProjectsOnly: false,
-            terminal,
+            terminalProvider,
             allowWarningsInSuccessfulBuild: false
           })
       ).toThrowErrorMatchingSnapshot();
@@ -73,7 +71,7 @@ describe('TaskRunner', () => {
         quietMode: false,
         parallelism: '1',
         changedProjectsOnly: false,
-        terminal,
+        terminalProvider,
         allowWarningsInSuccessfulBuild: false
       };
     });
@@ -186,7 +184,7 @@ describe('TaskRunner', () => {
           quietMode: false,
           parallelism: '1',
           changedProjectsOnly: false,
-          terminal,
+          terminalProvider,
           allowWarningsInSuccessfulBuild: false
         };
       });
@@ -222,7 +220,7 @@ describe('TaskRunner', () => {
           quietMode: false,
           parallelism: '1',
           changedProjectsOnly: false,
-          terminal,
+          terminalProvider,
           allowWarningsInSuccessfulBuild: true
         };
       });

@@ -8,7 +8,9 @@ import {
   ConsoleTerminalProvider,
   Colors,
   IColorableSequence,
-  AlreadyReportedError
+  AlreadyReportedError,
+  ITerminalProvider,
+  TerminalProviderSeverity
 } from '@rushstack/node-core-library';
 
 import { Stopwatch } from '../../utilities/Stopwatch';
@@ -20,7 +22,30 @@ export interface ITaskRunnerOptions {
   parallelism: string | undefined;
   changedProjectsOnly: boolean;
   allowWarningsInSuccessfulBuild: boolean;
-  terminal?: Terminal;
+  terminalProvider?: ITerminalProvider;
+}
+
+class StringifyTerminalProvider implements ITerminalProvider {
+  public readonly supportsColor: boolean;
+  public readonly eolCharacter: string;
+  public readonly terminal: Terminal;
+
+  private _buffer: string = '';
+
+  public constructor(providerWithSettings: ITerminalProvider) {
+    this.supportsColor = providerWithSettings.supportsColor;
+    this.eolCharacter = providerWithSettings.eolCharacter;
+  }
+
+  public write(data: string, severity: TerminalProviderSeverity): void {
+    this._buffer += data;
+  }
+
+  public writeToString(callback: (terminal: Terminal) => void): string {
+    this._buffer = '';
+    callback(this.terminal);
+    return this._buffer;
+  }
 }
 
 /**
@@ -41,7 +66,9 @@ export class TaskRunner {
   private _currentActiveTasks: number;
   private _totalTasks: number;
   private _completedTasks: number;
+  private _terminalProvider: ITerminalProvider;
   private _terminal: Terminal;
+  private _stringifyTerminalProvider: StringifyTerminalProvider;
 
   public constructor(orderedTasks: ITask[], options: ITaskRunnerOptions) {
     const {
@@ -49,7 +76,7 @@ export class TaskRunner {
       parallelism,
       changedProjectsOnly,
       allowWarningsInSuccessfulBuild,
-      terminal = new Terminal(new ConsoleTerminalProvider())
+      terminalProvider = new ConsoleTerminalProvider()
     } = options;
     this._tasks = orderedTasks;
     this._buildQueue = orderedTasks.slice(0);
@@ -58,7 +85,10 @@ export class TaskRunner {
     this._hasAnyWarnings = false;
     this._changedProjectsOnly = changedProjectsOnly;
     this._allowWarningsInSuccessfulBuild = allowWarningsInSuccessfulBuild;
-    this._terminal = terminal;
+    this._terminalProvider = terminalProvider;
+    this._terminal = new Terminal(terminalProvider);
+
+    this._stringifyTerminalProvider = new StringifyTerminalProvider(this._terminalProvider);
 
     const numberOfCores: number = os.cpus().length;
 
