@@ -14,7 +14,6 @@ import {
 import { Stopwatch } from '../../utilities/Stopwatch';
 import { ITask } from './ITask';
 import { TaskStatus } from './TaskStatus';
-import { TaskError } from './TaskError';
 
 export interface ITaskRunnerOptions {
   quietMode: boolean;
@@ -103,7 +102,7 @@ export class TaskRunner {
       `Executing a maximum of ${this._parallelism} simultaneous processes...${os.EOL}`
     );
 
-    return this._startAvailableTasks().then(() => {
+    return this._startAvailableTasksAsync().then(() => {
       this._printTaskStatus();
 
       if (this._hasAnyFailures) {
@@ -143,7 +142,7 @@ export class TaskRunner {
    * Helper function which finds any tasks which are available to run and begins executing them.
    * It calls the complete callback when all tasks are completed, or rejects if any task fails.
    */
-  private _startAvailableTasks(): Promise<void> {
+  private _startAvailableTasksAsync(): Promise<void> {
     const taskPromises: Promise<void>[] = [];
     let ctask: ITask | undefined;
     while (this._currentActiveTasks < this._parallelism && (ctask = this._getNextTask())) {
@@ -155,48 +154,51 @@ export class TaskRunner {
       task.stopwatch = Stopwatch.start();
       task.writer = Interleaver.registerTask(task.name, this._quietMode);
 
-      taskPromises.push(
-        task
-          .execute(task.writer)
-          .then((result: TaskStatus) => {
-            task.stopwatch.stop();
-            task.writer.close();
-
-            this._currentActiveTasks--;
-            this._completedTasks++;
-            switch (result) {
-              case TaskStatus.Success:
-                this._markTaskAsSuccess(task);
-                break;
-              case TaskStatus.SuccessWithWarning:
-                this._hasAnyWarnings = true;
-                this._markTaskAsSuccessWithWarning(task);
-                break;
-              case TaskStatus.Skipped:
-                this._markTaskAsSkipped(task);
-                break;
-              case TaskStatus.Failure:
-                this._hasAnyFailures = true;
-                this._markTaskAsFailed(task);
-                break;
-            }
-          })
-          .catch((error: TaskError) => {
-            task.writer.close();
-
-            this._currentActiveTasks--;
-
-            this._hasAnyFailures = true;
-            task.error = error;
-            this._markTaskAsFailed(task);
-          })
-          .then(() => this._startAvailableTasks())
-      );
+      taskPromises.push(this._startTaskAsync(task));
     }
 
     return Promise.all(taskPromises).then(() => {
       /* collapse void[] to void */
     });
+  }
+
+  private async _startTaskAsync(task: ITask): Promise<void> {
+    try {
+      const result: TaskStatus = await task.execute(task.writer);
+
+      task.stopwatch.stop();
+      task.writer.close();
+
+      this._currentActiveTasks--;
+      this._completedTasks++;
+      switch (result) {
+        case TaskStatus.Success:
+          this._markTaskAsSuccess(task);
+          break;
+        case TaskStatus.SuccessWithWarning:
+          this._hasAnyWarnings = true;
+          this._markTaskAsSuccessWithWarning(task);
+          break;
+        case TaskStatus.Skipped:
+          this._markTaskAsSkipped(task);
+          break;
+        case TaskStatus.Failure:
+          this._hasAnyFailures = true;
+          this._markTaskAsFailed(task);
+          break;
+      }
+    } catch (error) {
+      task.writer.close();
+
+      this._currentActiveTasks--;
+      this._hasAnyFailures = true;
+
+      // eslint-disable-next-line require-atomic-updates
+      task.error = error;
+
+      this._markTaskAsFailed(task);
+    }
+    await this._startAvailableTasksAsync();
   }
 
   /**
