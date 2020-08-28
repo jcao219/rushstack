@@ -35,16 +35,25 @@ class StringifyTerminalProvider implements ITerminalProvider {
   public constructor(providerWithSettings: ITerminalProvider) {
     this.supportsColor = providerWithSettings.supportsColor;
     this.eolCharacter = providerWithSettings.eolCharacter;
+    this.terminal = new Terminal(this);
   }
 
   public write(data: string, severity: TerminalProviderSeverity): void {
     this._buffer += data;
   }
 
-  public writeToString(callback: (terminal: Terminal) => void): string {
+  public writeLineToTaskWriter(task: ITask, ...messageParts: (string | IColorableSequence)[]): void {
     this._buffer = '';
-    callback(this.terminal);
-    return this._buffer;
+    this.terminal.writeLine(...messageParts);
+    task.writer.writeLine(this._buffer);
+    this._buffer = '';
+  }
+
+  public writeErrorLineToTaskWriter(task: ITask, ...messageParts: (string | IColorableSequence)[]): void {
+    this._buffer = '';
+    this.terminal.writeLine(...messageParts);
+    task.writer.writeError(this._buffer);
+    this._buffer = '';
   }
 }
 
@@ -174,15 +183,16 @@ export class TaskRunner {
    */
   private _startAvailableTasksAsync(): Promise<void> {
     const taskPromises: Promise<void>[] = [];
-    let ctask: ITask | undefined;
-    while (this._currentActiveTasks < this._parallelism && (ctask = this._getNextTask())) {
+    let currentTask: ITask | undefined;
+    while (this._currentActiveTasks < this._parallelism && (currentTask = this._getNextTask())) {
       this._currentActiveTasks++;
-      const task: ITask = ctask;
+      const task: ITask = currentTask;
       task.status = TaskStatus.Executing;
-      this._terminal.writeLine(Colors.white(`[${task.name}] started`));
 
       task.stopwatch = Stopwatch.start();
       task.writer = Interleaver.registerTask(task.name, this._quietMode);
+
+      this._stringifyTerminalProvider.writeLineToTaskWriter(task, Colors.white(`[${task.name}] started`));
 
       taskPromises.push(this._startTaskAsync(task));
     }
@@ -197,7 +207,6 @@ export class TaskRunner {
       const result: TaskStatus = await task.execute(task.writer);
 
       task.stopwatch.stop();
-      task.writer.close();
 
       this._currentActiveTasks--;
       this._completedTasks++;
@@ -218,8 +227,6 @@ export class TaskRunner {
           break;
       }
     } catch (error) {
-      task.writer.close();
-
       this._currentActiveTasks--;
       this._hasAnyFailures = true;
 
@@ -228,6 +235,9 @@ export class TaskRunner {
 
       this._markTaskAsFailed(task);
     }
+
+    task.writer.close();
+
     await this._startAvailableTasksAsync();
   }
 
@@ -263,11 +273,13 @@ export class TaskRunner {
    */
   private _markTaskAsSuccess(task: ITask): void {
     if (task.hadEmptyScript) {
-      this._terminal.writeLine(
+      this._stringifyTerminalProvider.writeLineToTaskWriter(
+        task,
         Colors.green(`${this._getCurrentCompletedTaskString()}[${task.name}] had an empty script`)
       );
     } else {
-      this._terminal.writeLine(
+      this._stringifyTerminalProvider.writeLineToTaskWriter(
+        task,
         Colors.green(
           `${this._getCurrentCompletedTaskString()}` +
             `[${task.name}] completed successfully in ${task.stopwatch.toString()}`
@@ -289,7 +301,8 @@ export class TaskRunner {
    * list of all its dependents
    */
   private _markTaskAsSuccessWithWarning(task: ITask): void {
-    this._terminal.writeWarningLine(
+    this._stringifyTerminalProvider.writeErrorLineToTaskWriter(
+      task,
       `${this._getCurrentCompletedTaskString()}` +
         `[${task.name}] completed with warnings in ${task.stopwatch.toString()}`
     );
@@ -306,7 +319,11 @@ export class TaskRunner {
    * Marks a task as skipped.
    */
   private _markTaskAsSkipped(task: ITask): void {
-    this._terminal.writeLine(Colors.green(`${this._getCurrentCompletedTaskString()}[${task.name}] skipped`));
+    this._stringifyTerminalProvider.writeLineToTaskWriter(
+      task,
+      Colors.green(`${this._getCurrentCompletedTaskString()}[${task.name}] skipped`)
+    );
+
     task.status = TaskStatus.Skipped;
     task.dependents.forEach((dependent: ITask) => {
       dependent.dependencies.delete(task);
