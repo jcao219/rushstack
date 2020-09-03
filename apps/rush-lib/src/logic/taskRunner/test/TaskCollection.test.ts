@@ -2,7 +2,7 @@
 // See LICENSE in the project root for license information.
 
 import { TaskCollection } from '../TaskCollection';
-import { ITaskWriter } from '@rushstack/stream-collator';
+import { CollatedWriter } from '@rushstack/stream-collator';
 import { TaskStatus } from '../TaskStatus';
 import { ITaskDefinition, ITask } from '../ITask';
 import { StringBufferTerminalProvider } from '@rushstack/node-core-library';
@@ -11,7 +11,7 @@ function createDummyTask(name: string, action?: () => void): ITaskDefinition {
   return {
     name,
     isIncrementalBuildAllowed: false,
-    execute: (writer: ITaskWriter) => {
+    execute: (writer: CollatedWriter) => {
       if (action) {
         action();
       }

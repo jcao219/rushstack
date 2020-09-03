@@ -4,7 +4,7 @@
 import * as child_process from 'child_process';
 import * as path from 'path';
 import { JsonFile, Text, FileSystem, JsonObject } from '@rushstack/node-core-library';
-import { ITaskWriter } from '@rushstack/stream-collator';
+import { CollatedWriter, StreamKind } from '@rushstack/stream-collator';
 import { IPackageDeps } from '@rushstack/package-deps-hash';
 
 import { RushConfiguration } from '../../api/RushConfiguration';
@@ -28,7 +28,7 @@ export interface IProjectTaskOptions {
   packageDepsFilename: string;
 }
 
-function _areShallowEqual(object1: JsonObject, object2: JsonObject, writer: ITaskWriter): boolean {
+function _areShallowEqual(object1: JsonObject, object2: JsonObject, writer: CollatedWriter): boolean {
   for (const n in object1) {
     if (!(n in object2) || object1[n] !== object2[n]) {
       // writer.writeLine(`Found mismatch: "${n}": "${object1[n]}" !== "${object2[n]}"`);
@@ -79,7 +79,7 @@ export class ProjectTask implements ITaskDefinition {
     return rushProject.packageName;
   }
 
-  public execute(writer: ITaskWriter): Promise<TaskStatus> {
+  public execute(writer: CollatedWriter): Promise<TaskStatus> {
     try {
       if (!this._commandToRun) {
         this.hadEmptyScript = true;
@@ -91,7 +91,7 @@ export class ProjectTask implements ITaskDefinition {
     }
   }
 
-  private _getPackageDependencies(writer: ITaskWriter): IPackageDependencies | undefined {
+  private _getPackageDependencies(writer: CollatedWriter): IPackageDependencies | undefined {
     let deps: IPackageDependencies | undefined = undefined;
     try {
       deps = {
@@ -99,7 +99,7 @@ export class ProjectTask implements ITaskDefinition {
         arguments: this._commandToRun
       };
     } catch (error) {
-      writer.writeLine(
+      writer.terminal.writeStdoutLine(
         'Unable to calculate incremental build state. Instead running full rebuild. ' + error.toString()
       );
     }
@@ -108,7 +108,7 @@ export class ProjectTask implements ITaskDefinition {
   }
 
   private _executeTask(
-    writer: ITaskWriter,
+    writer: CollatedWriter,
     currentPackageDeps: IPackageDependencies | undefined
   ): Promise<TaskStatus> {
     try {
@@ -116,7 +116,7 @@ export class ProjectTask implements ITaskDefinition {
       const projectFolder: string = this._rushProject.projectFolder;
       let lastPackageDeps: IPackageDependencies | undefined = undefined;
 
-      writer.writeLine(`>>> ${this.name}`);
+      writer.terminal.writeStdoutLine(`>>> ${this.name}`);
 
       // TODO: Remove legacyDepsPath with the next major release of Rush
       const legacyDepsPath: string = path.join(this._rushProject.projectFolder, 'package-deps.json');
@@ -131,7 +131,7 @@ export class ProjectTask implements ITaskDefinition {
           lastPackageDeps = JsonFile.load(currentDepsPath) as IPackageDependencies;
         } catch (e) {
           // Warn and ignore - treat failing to load the file as the project being not built.
-          writer.writeLine(
+          writer.terminal.writeStdoutLine(
             `Warning: error parsing ${this._packageDepsFilename}: ${e}. Ignoring and ` +
               `treating the command "${this._commandToRun}" as not run.`
           );
@@ -155,7 +155,7 @@ export class ProjectTask implements ITaskDefinition {
         FileSystem.deleteFile(legacyDepsPath);
 
         if (!this._commandToRun) {
-          writer.writeLine(
+          writer.terminal.writeStdoutLine(
             `The task command "${this._commandToRun}" was registered in the package.json but is blank,` +
               ` so no action will be taken.`
           );
@@ -172,7 +172,7 @@ export class ProjectTask implements ITaskDefinition {
 
         // Run the task
 
-        writer.writeLine(this._commandToRun);
+        writer.terminal.writeStdoutLine(this._commandToRun);
         const task: child_process.ChildProcess = Utilities.executeLifecycleCommandAsync(this._commandToRun, {
           rushConfiguration: this._rushConfiguration,
           workingDirectory: projectFolder,
@@ -186,12 +186,12 @@ export class ProjectTask implements ITaskDefinition {
         // Hook into events, in order to get live streaming of build log
         if (task.stdout !== null) {
           task.stdout.on('data', (data: string) => {
-            writer.write(data);
+            writer.terminal.writeChunk({ text: data, stream: StreamKind.Stdout });
           });
         }
         if (task.stderr !== null) {
           task.stderr.on('data', (data: string) => {
-            writer.writeError(data);
+            writer.terminal.writeChunk({ text: data, stream: StreamKind.Stderr });
             this._hasWarningOrError = true;
           });
         }
@@ -225,7 +225,7 @@ export class ProjectTask implements ITaskDefinition {
   }
 
   // @todo #179371: add log files to list of things that get gulp cleaned
-  private _writeLogsToDisk(writer: ITaskWriter): void {
+  private _writeLogsToDisk(writer: CollatedWriter): void {
     try {
       const logFilename: string = path.basename(this._rushProject.projectFolder);
 

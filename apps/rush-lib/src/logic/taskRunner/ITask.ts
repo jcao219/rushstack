@@ -1,7 +1,7 @@
 ﻿// Copyright (c) Microsoft Corporation. All rights reserved. Licensed under the MIT license.
 // See LICENSE in the project root for license information.
 
-import { ITaskWriter } from '@rushstack/stream-collator';
+import { CollatedWriter, StdioSummarizer } from '@rushstack/stream-collator';
 
 import { Stopwatch } from '../../utilities/Stopwatch';
 import { TaskStatus } from './TaskStatus';
@@ -30,7 +30,7 @@ export interface ITaskDefinition {
   /**
    * Method to be executed for the task.
    */
-  execute: (writer: ITaskWriter) => Promise<TaskStatus>;
+  execute: (writer: CollatedWriter) => Promise<TaskStatus>;
 }
 
 /**
@@ -96,7 +96,9 @@ export interface ITask extends ITaskDefinition {
   /**
    * The task writer which contains information from the output streams of this task
    */
-  writer: ITaskWriter;
+  writer: CollatedWriter;
+
+  stdioSummarizer: StdioSummarizer;
 
   /**
    * The stopwatch which measures how long it takes the task to execute

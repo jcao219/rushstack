@@ -6,10 +6,9 @@ jest.mock('../../../utilities/Utilities');
 
 import { EOL } from 'os';
 import { TaskRunner, ITaskRunnerOptions } from '../TaskRunner';
-import { ITaskWriter } from '@rushstack/stream-collator';
+import { ICollatedChunk, CollatedWriter } from '@rushstack/stream-collator';
 import { TaskStatus } from '../TaskStatus';
 import { ITaskDefinition, ITask } from '../ITask';
-import { StringBufferTerminalProvider } from '@rushstack/node-core-library';
 import { Utilities } from '../../../utilities/Utilities';
 
 const mockGetTimeInMs: jest.Mock = jest.fn();
@@ -34,20 +33,31 @@ function createTaskRunner(
   return new TaskRunner([task], taskRunnerOptions);
 }
 
-function checkConsoleOutput(terminalProvider: StringBufferTerminalProvider): void {
-  expect(terminalProvider.getOutput()).toMatchSnapshot();
-  expect(terminalProvider.getVerbose()).toMatchSnapshot();
-  expect(terminalProvider.getWarningOutput()).toMatchSnapshot();
-  expect(terminalProvider.getErrorOutput()).toMatchSnapshot();
+class TestOutput {
+  public chunks: ICollatedChunk[] = [];
+
+  public writeChunk = (chunk: ICollatedChunk): void => {
+    this.chunks.push(chunk);
+  };
+  public reset(): void {
+    this.chunks.length = 0;
+  }
+  public getOutput(): string {
+    return this.chunks.map((x) => x.text).join('');
+  }
+
+  public writeSnapshot(): void {
+    expect(this.chunks).toMatchSnapshot();
+  }
 }
+const testOutput: TestOutput = new TestOutput();
 
 describe('TaskRunner', () => {
-  let terminalProvider: StringBufferTerminalProvider;
   let taskRunner: TaskRunner;
   let taskRunnerOptions: ITaskRunnerOptions;
 
   beforeEach(() => {
-    terminalProvider = new StringBufferTerminalProvider(true);
+    testOutput.reset();
   });
 
   describe('Constructor', () => {
@@ -58,7 +68,7 @@ describe('TaskRunner', () => {
             quietMode: false,
             parallelism: 'tequila',
             changedProjectsOnly: false,
-            terminalProvider,
+            writeToStreamCallback: testOutput.writeChunk,
             allowWarningsInSuccessfulBuild: false
           })
       ).toThrowErrorMatchingSnapshot();
@@ -71,7 +81,7 @@ describe('TaskRunner', () => {
         quietMode: false,
         parallelism: '1',
         changedProjectsOnly: false,
-        terminalProvider,
+        writeToStreamCallback: testOutput.writeChunk,
         allowWarningsInSuccessfulBuild: false
       };
     });
@@ -82,9 +92,9 @@ describe('TaskRunner', () => {
       taskRunner = createTaskRunner(taskRunnerOptions, {
         name: 'stdout+stderr',
         isIncrementalBuildAllowed: false,
-        execute: (writer: ITaskWriter) => {
-          writer.write('Build step 1' + EOL);
-          writer.writeError('Error: step 1 failed' + EOL);
+        execute: (writer: CollatedWriter) => {
+          writer.terminal.writeStdoutLine('Build step 1');
+          writer.terminal.writeStderrLine('Error: step 1 failed');
           return Promise.resolve(TaskStatus.Failure);
         },
         hadEmptyScript: false
@@ -95,10 +105,10 @@ describe('TaskRunner', () => {
         .then(() => fail(EXPECTED_FAIL))
         .catch((err) => {
           expect(err.message).toMatchSnapshot();
-          const allMessages: string = terminalProvider.getOutput();
+          const allMessages: string = testOutput.getOutput();
           expect(allMessages).not.toContain('Build step 1');
           expect(allMessages).toContain('Error: step 1 failed');
-          checkConsoleOutput(terminalProvider);
+          testOutput.writeSnapshot();
         });
     });
 
@@ -106,9 +116,9 @@ describe('TaskRunner', () => {
       taskRunner = createTaskRunner(taskRunnerOptions, {
         name: 'stdout only',
         isIncrementalBuildAllowed: false,
-        execute: (writer: ITaskWriter) => {
-          writer.write('Build step 1' + EOL);
-          writer.write('Error: step 1 failed' + EOL);
+        execute: (writer: CollatedWriter) => {
+          writer.terminal.writeStdoutLine('Build step 1' + EOL);
+          writer.terminal.writeStdoutLine('Error: step 1 failed' + EOL);
           return Promise.resolve(TaskStatus.Failure);
         },
         hadEmptyScript: false
@@ -119,8 +129,8 @@ describe('TaskRunner', () => {
         .then(() => fail(EXPECTED_FAIL))
         .catch((err) => {
           expect(err.message).toMatchSnapshot();
-          expect(terminalProvider.getOutput()).toMatch(/Build step 1.*Error: step 1 failed/);
-          checkConsoleOutput(terminalProvider);
+          expect(testOutput.getOutput()).toMatch(/Build step 1.*Error: step 1 failed/);
+          testOutput.writeSnapshot();
         });
     });
 
@@ -128,10 +138,10 @@ describe('TaskRunner', () => {
       taskRunner = createTaskRunner(taskRunnerOptions, {
         name: 'large stdout only',
         isIncrementalBuildAllowed: false,
-        execute: (writer: ITaskWriter) => {
-          writer.write(`Building units...${EOL}`);
+        execute: (writer: CollatedWriter) => {
+          writer.terminal.writeStdoutLine(`Building units...${EOL}`);
           for (let i: number = 1; i <= 50; i++) {
-            writer.write(` - unit #${i};${EOL}`);
+            writer.terminal.writeStdoutLine(` - unit #${i};${EOL}`);
           }
           return Promise.resolve(TaskStatus.Failure);
         },
@@ -143,10 +153,10 @@ describe('TaskRunner', () => {
         .then(() => fail(EXPECTED_FAIL))
         .catch((err) => {
           expect(err.message).toMatchSnapshot();
-          expect(terminalProvider.getOutput()).toMatch(
+          expect(testOutput.getOutput()).toMatch(
             /Building units.* - unit #1;.* - unit #3;.*lines omitted.* - unit #48;.* - unit #50;/
           );
-          checkConsoleOutput(terminalProvider);
+          testOutput.writeSnapshot();
         });
     });
 
@@ -154,10 +164,10 @@ describe('TaskRunner', () => {
       taskRunner = createTaskRunner(taskRunnerOptions, {
         name: 'large stderr with leading and trailing blanks',
         isIncrementalBuildAllowed: false,
-        execute: (writer: ITaskWriter) => {
-          writer.writeError(`List of errors:  ${EOL}`);
+        execute: (writer: CollatedWriter) => {
+          writer.terminal.writeStderrLine(`List of errors:  ${EOL}`);
           for (let i: number = 1; i <= 50; i++) {
-            writer.writeError(` - error #${i};  ${EOL}`);
+            writer.terminal.writeStderrLine(` - error #${i};  ${EOL}`);
           }
           return Promise.resolve(TaskStatus.Failure);
         },
@@ -169,10 +179,10 @@ describe('TaskRunner', () => {
         .then(() => fail(EXPECTED_FAIL))
         .catch((err) => {
           expect(err.message).toMatchSnapshot();
-          expect(terminalProvider.getOutput()).toMatch(
+          expect(testOutput.getOutput()).toMatch(
             /List of errors:\S.* - error #1;\S.*lines omitted.* - error #48;\S.* - error #50;\S/
           );
-          checkConsoleOutput(terminalProvider);
+          testOutput.writeSnapshot();
         });
     });
   });
@@ -184,7 +194,7 @@ describe('TaskRunner', () => {
           quietMode: false,
           parallelism: '1',
           changedProjectsOnly: false,
-          terminalProvider,
+          writeToStreamCallback: testOutput.writeChunk,
           allowWarningsInSuccessfulBuild: false
         };
       });
@@ -193,9 +203,9 @@ describe('TaskRunner', () => {
         taskRunner = createTaskRunner(taskRunnerOptions, {
           name: 'success with warnings (failure)',
           isIncrementalBuildAllowed: false,
-          execute: (writer: ITaskWriter) => {
-            writer.write('Build step 1' + EOL);
-            writer.write('Warning: step 1 succeeded with warnings' + EOL);
+          execute: (writer: CollatedWriter) => {
+            writer.terminal.writeStdoutLine('Build step 1' + EOL);
+            writer.terminal.writeStdoutLine('Warning: step 1 succeeded with warnings' + EOL);
             return Promise.resolve(TaskStatus.SuccessWithWarning);
           },
           hadEmptyScript: false
@@ -206,10 +216,10 @@ describe('TaskRunner', () => {
           .then(() => fail('Promise returned by execute() resolved but was expected to fail'))
           .catch((err) => {
             expect(err.message).toMatchSnapshot();
-            const allMessages: string = terminalProvider.getOutput();
+            const allMessages: string = testOutput.getOutput();
             expect(allMessages).toContain('Build step 1');
             expect(allMessages).toContain('step 1 succeeded with warnings');
-            checkConsoleOutput(terminalProvider);
+            testOutput.writeSnapshot();
           });
       });
     });
@@ -220,7 +230,7 @@ describe('TaskRunner', () => {
           quietMode: false,
           parallelism: '1',
           changedProjectsOnly: false,
-          terminalProvider,
+          writeToStreamCallback: testOutput.writeChunk,
           allowWarningsInSuccessfulBuild: true
         };
       });
@@ -229,9 +239,9 @@ describe('TaskRunner', () => {
         taskRunner = createTaskRunner(taskRunnerOptions, {
           name: 'success with warnings (success)',
           isIncrementalBuildAllowed: false,
-          execute: (writer: ITaskWriter) => {
-            writer.write('Build step 1' + EOL);
-            writer.write('Warning: step 1 succeeded with warnings' + EOL);
+          execute: (writer: CollatedWriter) => {
+            writer.terminal.writeStdoutLine('Build step 1' + EOL);
+            writer.terminal.writeStdoutLine('Warning: step 1 succeeded with warnings' + EOL);
             return Promise.resolve(TaskStatus.SuccessWithWarning);
           },
           hadEmptyScript: false
@@ -240,10 +250,10 @@ describe('TaskRunner', () => {
         return taskRunner
           .execute()
           .then(() => {
-            const allMessages: string = terminalProvider.getOutput();
+            const allMessages: string = testOutput.getOutput();
             expect(allMessages).toContain('Build step 1');
             expect(allMessages).toContain('Warning: step 1 succeeded with warnings');
-            checkConsoleOutput(terminalProvider);
+            testOutput.writeSnapshot();
           })
           .catch((err) => fail('Promise returned by execute() rejected but was expected to resolve'));
       });
